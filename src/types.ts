@@ -1,5 +1,6 @@
 export type CropMode = 'top' | 'offset' | 'bottom';
 export type OffsetInputMode = 'pixel' | 'page';
+export type CropPresetId = 'desktop' | 'mobile';
 
 export type ProcessOptions = {
   mode: CropMode;
@@ -9,6 +10,6 @@ export type ProcessOptions = {
 export type ProcessResult = {
   blob: Blob;
   dataUrl: string;
-  width: 1920;
-  height: 1080;
+  width: number;
+  height: number;
 };

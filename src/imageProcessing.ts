@@ -1,16 +1,17 @@
 import type { CropMode } from './types';
 
-export const TARGET_WIDTH = 1920 as const;
-export const TARGET_HEIGHT = 1080 as const;
+export const DEFAULT_TARGET_WIDTH = 1920 as const;
+export const DEFAULT_TARGET_HEIGHT = 1080 as const;
 
-export const normalizeTo1920 = (img: HTMLImageElement): HTMLCanvasElement => {
+export const normalizeToWidth = (img: HTMLImageElement, targetWidth: number): HTMLCanvasElement => {
   if (!img.width || !img.height) {
     throw new Error('图片尺寸无效，无法处理。');
   }
 
-  const normalizedHeight = Math.max(1, Math.round((img.height * TARGET_WIDTH) / img.width));
+  const safeTargetWidth = Math.max(1, Math.trunc(targetWidth));
+  const normalizedHeight = Math.max(1, Math.round((img.height * safeTargetWidth) / img.width));
   const canvas = document.createElement('canvas');
-  canvas.width = TARGET_WIDTH;
+  canvas.width = safeTargetWidth;
   canvas.height = normalizedHeight;
 
   const ctx = canvas.getContext('2d');
@@ -19,19 +20,23 @@ export const normalizeTo1920 = (img: HTMLImageElement): HTMLCanvasElement => {
   }
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.drawImage(img, 0, 0, TARGET_WIDTH, normalizedHeight);
+  ctx.drawImage(img, 0, 0, safeTargetWidth, normalizedHeight);
   return canvas;
 };
 
 export const renderCrop = (
   normalized: CanvasImageSource,
   sourceHeight: number,
+  targetWidth: number,
+  targetHeight: number,
   mode: CropMode,
   n: number
 ): HTMLCanvasElement => {
+  const safeTargetWidth = Math.max(1, Math.trunc(targetWidth));
+  const safeTargetHeight = Math.max(1, Math.trunc(targetHeight));
   const output = document.createElement('canvas');
-  output.width = TARGET_WIDTH;
-  output.height = TARGET_HEIGHT;
+  output.width = safeTargetWidth;
+  output.height = safeTargetHeight;
 
   const ctx = output.getContext('2d');
   if (!ctx) {
@@ -46,18 +51,18 @@ export const renderCrop = (
   if (mode === 'offset') {
     startY = normalizedN;
   } else if (mode === 'bottom') {
-    startY = sourceHeight - TARGET_HEIGHT;
+    startY = sourceHeight - safeTargetHeight;
   }
 
   const requestedTop = startY;
-  const requestedBottom = startY + TARGET_HEIGHT;
+  const requestedBottom = startY + safeTargetHeight;
   const safeTop = Math.max(0, requestedTop);
   const safeBottom = Math.min(sourceHeight, requestedBottom);
 
   if (safeBottom > safeTop) {
     const drawHeight = safeBottom - safeTop;
     const destY = safeTop - requestedTop;
-    ctx.drawImage(normalized, 0, safeTop, TARGET_WIDTH, drawHeight, 0, destY, TARGET_WIDTH, drawHeight);
+    ctx.drawImage(normalized, 0, safeTop, safeTargetWidth, drawHeight, 0, destY, safeTargetWidth, drawHeight);
   }
 
   return output;

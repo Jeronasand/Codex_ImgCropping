@@ -1,24 +1,29 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  TARGET_HEIGHT,
-  TARGET_WIDTH,
   canvasToPngBlob,
   copyBlobToClipboard,
   loadImageFromFile,
-  normalizeTo1920,
+  normalizeToWidth,
   renderCrop
 } from './imageProcessing';
-import type { CropMode, OffsetInputMode, ProcessResult } from './types';
+import type { CropMode, CropPresetId, OffsetInputMode, ProcessResult } from './types';
 
 const ACCEPT_IMAGE = 'image/*';
+
+const PRESETS: Record<CropPresetId, { label: string; width: number; height: number }> = {
+  desktop: { label: '桌面 1920 × 1080', width: 1920, height: 1080 },
+  mobile: { label: '移动端 375 × 812', width: 375, height: 812 }
+};
 
 const App = () => {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
   const syncingScrollRef = useRef(false);
+  const normalizedCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
   const [sourceName, setSourceName] = useState('');
+  const [preset, setPreset] = useState<CropPresetId>('desktop');
   const [mode, setMode] = useState<CropMode>('top');
   const [offsetInputMode, setOffsetInputMode] = useState<OffsetInputMode>('pixel');
   const [pixelValue, setPixelValue] = useState('0');
@@ -32,7 +37,8 @@ const App = () => {
   const [normalizedHeight, setNormalizedHeight] = useState(0);
   const [pickerViewportHeight, setPickerViewportHeight] = useState(180);
 
-  const normalizedCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const targetWidth = PRESETS[preset].width;
+  const targetHeight = PRESETS[preset].height;
 
   const pixelOffset = useMemo(() => {
     if (offsetInputMode === 'page') {
@@ -40,12 +46,12 @@ const App = () => {
       if (!Number.isFinite(page)) {
         return 0;
       }
-      return Math.trunc((page - 1) * TARGET_HEIGHT);
+      return Math.trunc((page - 1) * targetHeight);
     }
 
     const n = Number(pixelValue);
     return Number.isFinite(n) ? Math.trunc(n) : 0;
-  }, [offsetInputMode, pageValue, pixelValue]);
+  }, [offsetInputMode, pageValue, pixelValue, targetHeight]);
 
   useEffect(() => {
     return () => {
@@ -74,7 +80,7 @@ const App = () => {
       return;
     }
 
-    const normalized = normalizeTo1920(sourceImage);
+    const normalized = normalizeToWidth(sourceImage, targetWidth);
     normalizedCanvasRef.current = normalized;
     setNormalizedHeight(normalized.height);
 
@@ -90,7 +96,7 @@ const App = () => {
         return nextUrl;
       });
     }, 'image/png');
-  }, [sourceImage]);
+  }, [sourceImage, targetWidth]);
 
   useEffect(() => {
     const onPaste = async (event: ClipboardEvent) => {
@@ -140,7 +146,7 @@ const App = () => {
           return;
         }
 
-        const output = renderCrop(normalized, normalized.height, mode, pixelOffset);
+        const output = renderCrop(normalized, normalized.height, targetWidth, targetHeight, mode, pixelOffset);
         const blob = await canvasToPngBlob(output);
         const nextUrl = URL.createObjectURL(blob);
 
@@ -157,8 +163,8 @@ const App = () => {
           return {
             blob,
             dataUrl: nextUrl,
-            width: TARGET_WIDTH,
-            height: TARGET_HEIGHT
+            width: targetWidth,
+            height: targetHeight
           };
         });
 
@@ -178,7 +184,7 @@ const App = () => {
     return () => {
       cancelled = true;
     };
-  }, [sourceImage, mode, pixelOffset, normalizedHeight]);
+  }, [sourceImage, mode, pixelOffset, normalizedHeight, targetWidth, targetHeight]);
 
   useEffect(() => {
     const picker = pickerRef.current;
@@ -187,8 +193,8 @@ const App = () => {
     }
 
     const updateMetrics = () => {
-      const scale = picker.clientWidth / TARGET_WIDTH;
-      const viewport = Math.max(120, Math.round(TARGET_HEIGHT * Math.max(scale, 0.05)));
+      const scale = picker.clientWidth / targetWidth;
+      const viewport = Math.max(120, Math.round(targetHeight * Math.max(scale, 0.05)));
       setPickerViewportHeight(viewport);
     };
 
@@ -196,7 +202,7 @@ const App = () => {
     const observer = new ResizeObserver(updateMetrics);
     observer.observe(picker);
     return () => observer.disconnect();
-  }, [normalizedHeight]);
+  }, [normalizedHeight, targetHeight, targetWidth]);
 
   useEffect(() => {
     const picker = pickerRef.current;
@@ -204,16 +210,16 @@ const App = () => {
       return;
     }
 
-    const scale = picker.clientWidth / TARGET_WIDTH;
+    const scale = picker.clientWidth / targetWidth;
     if (!Number.isFinite(scale) || scale <= 0) {
       return;
     }
 
-    const maxStart = Math.max(0, normalizedHeight - TARGET_HEIGHT);
+    const maxStart = Math.max(0, normalizedHeight - targetHeight);
     const safeStart = Math.min(Math.max(pixelOffset, 0), maxStart);
     syncingScrollRef.current = true;
     picker.scrollTop = Math.max(0, safeStart * scale);
-  }, [mode, pixelOffset, normalizedHeight, pickerViewportHeight]);
+  }, [mode, pixelOffset, normalizedHeight, pickerViewportHeight, targetHeight, targetWidth]);
 
   const handleFile = async (file: File, fallbackName?: string) => {
     if (!file.type.startsWith('image/')) {
@@ -281,7 +287,7 @@ const App = () => {
 
     const anchor = document.createElement('a');
     anchor.href = result.dataUrl;
-    anchor.download = `crop-${mode}-${Date.now()}.png`;
+    anchor.download = `crop-${preset}-${mode}-${Date.now()}.png`;
     anchor.click();
   };
 
@@ -292,14 +298,14 @@ const App = () => {
       return;
     }
 
-    const scale = picker.clientWidth / TARGET_WIDTH;
+    const scale = picker.clientWidth / targetWidth;
     if (!Number.isFinite(scale) || scale <= 0) {
       return;
     }
 
     const nextPixel = Math.trunc(picker.scrollTop / scale);
     setPixelValue(String(nextPixel));
-    const nextPage = Number.parseFloat((nextPixel / TARGET_HEIGHT + 1).toFixed(3));
+    const nextPage = Number.parseFloat((nextPixel / targetHeight + 1).toFixed(3));
     setPageValue(String(nextPage));
   };
 
@@ -308,134 +314,150 @@ const App = () => {
   return (
     <div className="app">
       <header className="hero">
-        <h1>1920 × 1080 图片裁切工具</h1>
-        <p>支持上传、拖拽、Ctrl/Cmd + V 粘贴导入，输出 PNG，可复制到剪贴板。</p>
+        <h1>图片裁切工具</h1>
+        <p>支持桌面端 1920×1080 与移动端 375×812，支持上传、拖拽、粘贴、复制与下载。</p>
       </header>
 
-      <section className="panel import-panel">
-        <h2>导入图片</h2>
-        <label
-          className={`drop-zone${isDragOver ? ' active' : ''}`}
-          onDragOver={(event) => {
-            event.preventDefault();
-            setIsDragOver(true);
-          }}
-          onDragLeave={() => setIsDragOver(false)}
-          onDrop={onDrop}
-        >
-          <input ref={inputRef} type="file" accept={ACCEPT_IMAGE} onChange={onFileInput} hidden />
-          <strong>点击选择图片 / 拖拽图片到此处 / 直接粘贴图片</strong>
-          <span>宽度会自动缩放到 1920，高度按模式裁切为 1080。</span>
-          <button type="button" onClick={() => inputRef.current?.click()} disabled={isBusy}>
-            选择图片
-          </button>
-        </label>
-      </section>
+      <div className="workspace">
+        <div className="tools-column">
+          <section className="panel">
+            <h2>导入图片</h2>
+            <label
+              className={`drop-zone${isDragOver ? ' active' : ''}`}
+              onDragOver={(event) => {
+                event.preventDefault();
+                setIsDragOver(true);
+              }}
+              onDragLeave={() => setIsDragOver(false)}
+              onDrop={onDrop}
+            >
+              <input ref={inputRef} type="file" accept={ACCEPT_IMAGE} onChange={onFileInput} hidden />
+              <strong>点击选择图片 / 拖拽图片到此处 / 直接粘贴图片</strong>
+              <span>图片宽度将按当前输出预设自动缩放。</span>
+              <button type="button" onClick={() => inputRef.current?.click()} disabled={isBusy}>
+                选择图片
+              </button>
+            </label>
+          </section>
 
-      <section className="panel">
-        <h2>裁切模式</h2>
-        <div className="mode-row">
-          <label>
-            <input type="radio" name="mode" checked={mode === 'top'} onChange={() => setMode('top')} />
-            顶部 0-1080
-          </label>
-          <label>
-            <input type="radio" name="mode" checked={mode === 'offset'} onChange={() => setMode('offset')} />
-            任意起始 n-(n+1080)
-          </label>
-          <label>
-            <input type="radio" name="mode" checked={mode === 'bottom'} onChange={() => setMode('bottom')} />
-            底部向上 1080
-          </label>
-        </div>
-
-        {mode === 'offset' ? (
-          <div className="offset-editor">
+          <section className="panel">
+            <h2>输出尺寸</h2>
             <div className="mode-row">
               <label>
-                <input
-                  type="radio"
-                  name="offset-input-mode"
-                  checked={offsetInputMode === 'pixel'}
-                  onChange={() => setOffsetInputMode('pixel')}
-                />
-                按像素输入 n
+                <input type="radio" name="preset" checked={preset === 'desktop'} onChange={() => setPreset('desktop')} />
+                {PRESETS.desktop.label}
               </label>
               <label>
-                <input
-                  type="radio"
-                  name="offset-input-mode"
-                  checked={offsetInputMode === 'page'}
-                  onChange={() => setOffsetInputMode('page')}
-                />
-                按页码换算
+                <input type="radio" name="preset" checked={preset === 'mobile'} onChange={() => setPreset('mobile')} />
+                {PRESETS.mobile.label}
               </label>
             </div>
 
-            {offsetInputMode === 'pixel' ? (
-              <label className="field">
-                起始像素 n
-                <input
-                  type="number"
-                  value={pixelValue}
-                  onChange={(event) => setPixelValue(event.target.value)}
-                  placeholder="例如 540"
-                />
+            <h2>裁切模式</h2>
+            <div className="mode-row">
+              <label>
+                <input type="radio" name="mode" checked={mode === 'top'} onChange={() => setMode('top')} />
+                顶部 0-{targetHeight}
               </label>
-            ) : (
-              <label className="field">
-                第几页（第 1 页从 0px 开始）
-                <input
-                  type="number"
-                  value={pageValue}
-                  onChange={(event) => setPageValue(event.target.value)}
-                  placeholder="例如 2"
-                />
+              <label>
+                <input type="radio" name="mode" checked={mode === 'offset'} onChange={() => setMode('offset')} />
+                任意起始 n-(n+{targetHeight})
               </label>
-            )}
+              <label>
+                <input type="radio" name="mode" checked={mode === 'bottom'} onChange={() => setMode('bottom')} />
+                底部向上 {targetHeight}
+              </label>
+            </div>
 
-            <p className="tip">{offsetLabel}</p>
-            {normalizedPreviewUrl ? (
-              <div className="scroll-picker-section">
-                <p className="tip">滚动下方预览可直接选择裁切起始区域。</p>
-                <div
-                  className="scroll-picker"
-                  ref={pickerRef}
-                  onScroll={onPickerScroll}
-                  style={{ height: `${pickerViewportHeight}px` }}
-                >
-                  <img src={normalizedPreviewUrl} alt="滚动选区预览" className="scroll-picker-image" />
+            {mode === 'offset' ? (
+              <div className="offset-editor">
+                <div className="mode-row">
+                  <label>
+                    <input
+                      type="radio"
+                      name="offset-input-mode"
+                      checked={offsetInputMode === 'pixel'}
+                      onChange={() => setOffsetInputMode('pixel')}
+                    />
+                    按像素输入 n
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="offset-input-mode"
+                      checked={offsetInputMode === 'page'}
+                      onChange={() => setOffsetInputMode('page')}
+                    />
+                    按页码换算
+                  </label>
                 </div>
+
+                {offsetInputMode === 'pixel' ? (
+                  <label className="field">
+                    起始像素 n
+                    <input
+                      type="number"
+                      value={pixelValue}
+                      onChange={(event) => setPixelValue(event.target.value)}
+                      placeholder="例如 540"
+                    />
+                  </label>
+                ) : (
+                  <label className="field">
+                    第几页（第 1 页从 0px 开始）
+                    <input
+                      type="number"
+                      value={pageValue}
+                      onChange={(event) => setPageValue(event.target.value)}
+                      placeholder="例如 2"
+                    />
+                  </label>
+                )}
+
+                <p className="tip">{offsetLabel}</p>
+                {normalizedPreviewUrl ? (
+                  <div className="scroll-picker-section">
+                    <p className="tip">滚动下方预览可直接选择裁切起始区域。</p>
+                    <div
+                      className="scroll-picker"
+                      ref={pickerRef}
+                      onScroll={onPickerScroll}
+                      style={{ height: `${pickerViewportHeight}px` }}
+                    >
+                      <img src={normalizedPreviewUrl} alt="滚动选区预览" className="scroll-picker-image" />
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
+          </section>
+        </div>
+
+        <section className="panel result-panel">
+          <h2>结果预览</h2>
+          <p className="meta">{sourceName ? `来源: ${sourceName}` : '尚未导入图片'}</p>
+          <p className="meta">输出尺寸: {targetWidth} × {targetHeight}</p>
+          <p className="meta">状态: {isBusy ? '处理中' : message}</p>
+          {error ? <p className="error">错误: {error}</p> : null}
+
+          <div className="preview-wrap">
+            {result ? (
+              <img src={result.dataUrl} alt="处理结果" className="preview" />
+            ) : (
+              <div className="empty">导入图片后将在这里显示预览</div>
+            )}
           </div>
-        ) : null}
-      </section>
 
-      <section className="panel result-panel">
-        <h2>结果</h2>
-        <p className="meta">{sourceName ? `来源: ${sourceName}` : '尚未导入图片'}</p>
-        <p className="meta">输出尺寸固定: {TARGET_WIDTH} × {TARGET_HEIGHT}</p>
-        <p className="meta">状态: {isBusy ? '处理中' : message}</p>
-        {error ? <p className="error">错误: {error}</p> : null}
-
-        <div className="preview-wrap">
-          {result ? (
-            <img src={result.dataUrl} alt="处理结果" className="preview" />
-          ) : (
-            <div className="empty">导入图片后将在这里显示预览</div>
-          )}
-        </div>
-
-        <div className="actions">
-          <button type="button" onClick={onCopy} disabled={!result || isBusy}>
-            复制图片
-          </button>
-          <button type="button" onClick={onDownload} disabled={!result || isBusy}>
-            下载 PNG
-          </button>
-        </div>
-      </section>
+          <div className="actions">
+            <button type="button" onClick={onCopy} disabled={!result || isBusy}>
+              复制图片
+            </button>
+            <button type="button" onClick={onDownload} disabled={!result || isBusy}>
+              下载 PNG
+            </button>
+          </div>
+        </section>
+      </div>
     </div>
   );
 };
