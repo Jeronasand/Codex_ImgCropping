@@ -1,12 +1,6 @@
-import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from 'react';
-import {
-  canvasToPngBlob,
-  copyBlobToClipboard,
-  loadImageFromFile,
-  normalizeToWidth,
-  renderCrop
-} from './imageProcessing';
-import type { CropMode, CropPresetId, OffsetInputMode, ProcessResult } from './types';
+import { ChangeEvent, DragEvent, WheelEvent, useEffect, useMemo, useRef, useState } from 'react';
+import { canvasToPngBlob, copyBlobToClipboard, loadImageFromFile, normalizeToWidth, renderCrop } from './imageProcessing';
+import type { CropPresetId, ProcessResult } from './types';
 
 const ACCEPT_IMAGE = 'image/*';
 
@@ -17,47 +11,31 @@ const PRESETS: Record<CropPresetId, { label: string; width: number; height: numb
 
 const App = () => {
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const pickerRef = useRef<HTMLDivElement | null>(null);
-  const syncingScrollRef = useRef(false);
   const normalizedCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
   const [sourceName, setSourceName] = useState('');
   const [preset, setPreset] = useState<CropPresetId>('desktop');
-  const [mode, setMode] = useState<CropMode>('top');
-  const [offsetInputMode, setOffsetInputMode] = useState<OffsetInputMode>('pixel');
-  const [pixelValue, setPixelValue] = useState('0');
-  const [pageValue, setPageValue] = useState('1');
+  const [startPixelText, setStartPixelText] = useState('0');
   const [isDragOver, setIsDragOver] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [message, setMessage] = useState('等待导入图片。');
   const [error, setError] = useState('');
   const [result, setResult] = useState<ProcessResult | null>(null);
-  const [normalizedPreviewUrl, setNormalizedPreviewUrl] = useState('');
   const [normalizedHeight, setNormalizedHeight] = useState(0);
-  const [pickerViewportHeight, setPickerViewportHeight] = useState(180);
 
   const targetWidth = PRESETS[preset].width;
   const targetHeight = PRESETS[preset].height;
 
-  const pixelOffset = useMemo(() => {
-    if (offsetInputMode === 'page') {
-      const page = Number(pageValue);
-      if (!Number.isFinite(page)) {
-        return 0;
-      }
-      return Math.trunc((page - 1) * targetHeight);
-    }
-
-    const n = Number(pixelValue);
+  const startPixel = useMemo(() => {
+    const n = Number(startPixelText);
     return Number.isFinite(n) ? Math.trunc(n) : 0;
-  }, [offsetInputMode, pageValue, pixelValue, targetHeight]);
+  }, [startPixelText]);
+
+  const pageText = useMemo(() => ((startPixel / targetHeight) + 1).toFixed(3), [startPixel, targetHeight]);
 
   useEffect(() => {
     return () => {
-      if (normalizedPreviewUrl) {
-        URL.revokeObjectURL(normalizedPreviewUrl);
-      }
       setResult((prev) => {
         if (prev?.dataUrl) {
           URL.revokeObjectURL(prev.dataUrl);
@@ -71,31 +49,12 @@ const App = () => {
     if (!sourceImage) {
       normalizedCanvasRef.current = null;
       setNormalizedHeight(0);
-      setNormalizedPreviewUrl((prev) => {
-        if (prev) {
-          URL.revokeObjectURL(prev);
-        }
-        return '';
-      });
       return;
     }
 
     const normalized = normalizeToWidth(sourceImage, targetWidth);
     normalizedCanvasRef.current = normalized;
     setNormalizedHeight(normalized.height);
-
-    normalized.toBlob((blob) => {
-      if (!blob) {
-        return;
-      }
-      const nextUrl = URL.createObjectURL(blob);
-      setNormalizedPreviewUrl((prev) => {
-        if (prev) {
-          URL.revokeObjectURL(prev);
-        }
-        return nextUrl;
-      });
-    }, 'image/png');
   }, [sourceImage, targetWidth]);
 
   useEffect(() => {
@@ -146,7 +105,7 @@ const App = () => {
           return;
         }
 
-        const output = renderCrop(normalized, normalized.height, targetWidth, targetHeight, mode, pixelOffset);
+        const output = renderCrop(normalized, normalized.height, targetWidth, targetHeight, 'offset', startPixel);
         const blob = await canvasToPngBlob(output);
         const nextUrl = URL.createObjectURL(blob);
 
@@ -184,42 +143,7 @@ const App = () => {
     return () => {
       cancelled = true;
     };
-  }, [sourceImage, mode, pixelOffset, normalizedHeight, targetWidth, targetHeight]);
-
-  useEffect(() => {
-    const picker = pickerRef.current;
-    if (!picker || !normalizedHeight) {
-      return;
-    }
-
-    const updateMetrics = () => {
-      const scale = picker.clientWidth / targetWidth;
-      const viewport = Math.max(120, Math.round(targetHeight * Math.max(scale, 0.05)));
-      setPickerViewportHeight(viewport);
-    };
-
-    updateMetrics();
-    const observer = new ResizeObserver(updateMetrics);
-    observer.observe(picker);
-    return () => observer.disconnect();
-  }, [normalizedHeight, targetHeight, targetWidth]);
-
-  useEffect(() => {
-    const picker = pickerRef.current;
-    if (!picker || mode !== 'offset' || !normalizedHeight) {
-      return;
-    }
-
-    const scale = picker.clientWidth / targetWidth;
-    if (!Number.isFinite(scale) || scale <= 0) {
-      return;
-    }
-
-    const maxStart = Math.max(0, normalizedHeight - targetHeight);
-    const safeStart = Math.min(Math.max(pixelOffset, 0), maxStart);
-    syncingScrollRef.current = true;
-    picker.scrollTop = Math.max(0, safeStart * scale);
-  }, [mode, pixelOffset, normalizedHeight, pickerViewportHeight, targetHeight, targetWidth]);
+  }, [sourceImage, startPixel, normalizedHeight, targetWidth, targetHeight]);
 
   const handleFile = async (file: File, fallbackName?: string) => {
     if (!file.type.startsWith('image/')) {
@@ -287,35 +211,36 @@ const App = () => {
 
     const anchor = document.createElement('a');
     anchor.href = result.dataUrl;
-    anchor.download = `crop-${preset}-${mode}-${Date.now()}.png`;
+    anchor.download = `crop-${preset}-${Date.now()}.png`;
     anchor.click();
   };
 
-  const onPickerScroll = () => {
-    const picker = pickerRef.current;
-    if (!picker || syncingScrollRef.current) {
-      syncingScrollRef.current = false;
-      return;
-    }
+  const jumpTop = () => setStartPixelText('0');
 
-    const scale = picker.clientWidth / targetWidth;
-    if (!Number.isFinite(scale) || scale <= 0) {
-      return;
-    }
-
-    const nextPixel = Math.trunc(picker.scrollTop / scale);
-    setPixelValue(String(nextPixel));
-    const nextPage = Number.parseFloat((nextPixel / targetHeight + 1).toFixed(3));
-    setPageValue(String(nextPage));
+  const jumpBottom = () => {
+    const maxStart = Math.max(0, normalizedHeight - targetHeight);
+    setStartPixelText(String(maxStart));
   };
 
-  const offsetLabel = offsetInputMode === 'page' ? `当前起始像素: ${pixelOffset}px` : '支持负数或超范围，将自动透明补白。';
+  const onPreviewWheel = (event: WheelEvent<HTMLDivElement>) => {
+    if (!result) {
+      return;
+    }
+
+    event.preventDefault();
+    const maxStart = Math.max(0, normalizedHeight - targetHeight);
+    const stepBase = Math.max(1, Math.round(Math.abs(event.deltaY)));
+    const step = event.shiftKey ? stepBase * 4 : stepBase;
+    const direction = Math.sign(event.deltaY);
+    const next = Math.min(maxStart, Math.max(0, startPixel + direction * step));
+    setStartPixelText(String(next));
+  };
 
   return (
     <div className="app">
       <header className="hero">
         <h1>图片裁切工具</h1>
-        <p>支持桌面端 1920×1080 与移动端 375×812，支持上传、拖拽、粘贴、复制与下载。</p>
+        <p>直接滚动选区即可裁切，支持桌面端 1920×1080 与移动端 375×812。</p>
       </header>
 
       <div className="workspace">
@@ -353,83 +278,23 @@ const App = () => {
               </label>
             </div>
 
-            <h2>裁切模式</h2>
-            <div className="mode-row">
-              <label>
-                <input type="radio" name="mode" checked={mode === 'top'} onChange={() => setMode('top')} />
-                顶部 0-{targetHeight}
-              </label>
-              <label>
-                <input type="radio" name="mode" checked={mode === 'offset'} onChange={() => setMode('offset')} />
-                任意起始 n-(n+{targetHeight})
-              </label>
-              <label>
-                <input type="radio" name="mode" checked={mode === 'bottom'} onChange={() => setMode('bottom')} />
-                底部向上 {targetHeight}
-              </label>
+            <h2>起始位置</h2>
+            <label className="field">
+              起始像素 n
+              <input
+                type="number"
+                value={startPixelText}
+                onChange={(event) => setStartPixelText(event.target.value)}
+                placeholder="例如 540"
+              />
+            </label>
+            <p className="tip">当前约第 {pageText} 页（每页高度 {targetHeight}px）。</p>
+            <p className="tip">可直接输入像素，也可在右侧预览区域滚轮直接调节。</p>
+
+            <div className="actions compact-actions">
+              <button type="button" onClick={jumpTop}>到顶部</button>
+              <button type="button" onClick={jumpBottom}>到底部</button>
             </div>
-
-            {mode === 'offset' ? (
-              <div className="offset-editor">
-                <div className="mode-row">
-                  <label>
-                    <input
-                      type="radio"
-                      name="offset-input-mode"
-                      checked={offsetInputMode === 'pixel'}
-                      onChange={() => setOffsetInputMode('pixel')}
-                    />
-                    按像素输入 n
-                  </label>
-                  <label>
-                    <input
-                      type="radio"
-                      name="offset-input-mode"
-                      checked={offsetInputMode === 'page'}
-                      onChange={() => setOffsetInputMode('page')}
-                    />
-                    按页码换算
-                  </label>
-                </div>
-
-                {offsetInputMode === 'pixel' ? (
-                  <label className="field">
-                    起始像素 n
-                    <input
-                      type="number"
-                      value={pixelValue}
-                      onChange={(event) => setPixelValue(event.target.value)}
-                      placeholder="例如 540"
-                    />
-                  </label>
-                ) : (
-                  <label className="field">
-                    第几页（第 1 页从 0px 开始）
-                    <input
-                      type="number"
-                      value={pageValue}
-                      onChange={(event) => setPageValue(event.target.value)}
-                      placeholder="例如 2"
-                    />
-                  </label>
-                )}
-
-                <p className="tip">{offsetLabel}</p>
-                {normalizedPreviewUrl ? (
-                  <div className="scroll-picker-section">
-                    <p className="tip">滚动下方预览可直接选择裁切起始区域。</p>
-                    <div
-                      className="scroll-picker"
-                      ref={pickerRef}
-                      onScroll={onPickerScroll}
-                      style={{ height: `${pickerViewportHeight}px` }}
-                    >
-                      <img src={normalizedPreviewUrl} alt="滚动选区预览" className="scroll-picker-image" />
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            ) : null}
           </section>
         </div>
 
@@ -440,7 +305,7 @@ const App = () => {
           <p className="meta">状态: {isBusy ? '处理中' : message}</p>
           {error ? <p className="error">错误: {error}</p> : null}
 
-          <div className="preview-wrap">
+          <div className="preview-wrap preview-wheel" onWheel={onPreviewWheel}>
             {result ? (
               <img src={result.dataUrl} alt="处理结果" className="preview" />
             ) : (

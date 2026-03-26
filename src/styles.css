@@ -155,24 +155,6 @@ input[type="number"] {
   font-size: 0.93rem;
 }
 
-.scroll-picker-section {
-  margin-top: 10px;
-}
-
-.scroll-picker {
-  width: 100%;
-  overflow-y: auto;
-  border: 1px solid #d0c0a8;
-  border-radius: 10px;
-  background: repeating-conic-gradient(#f0f0f0 0% 25%, #ffffff 0% 50%) 50% / 18px 18px;
-}
-
-.scroll-picker-image {
-  display: block;
-  width: 100%;
-  height: auto;
-}
-
 .error {
   margin: 8px 0;
   color: #a91212;
@@ -192,6 +174,14 @@ input[type="number"] {
   display: block;
   width: 100%;
   height: auto;
+}
+
+.preview-wheel {
+  cursor: ns-resize;
+}
+
+.compact-actions {
+  margin-bottom: 8px;
 }
 
 .empty {
