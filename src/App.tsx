@@ -14,6 +14,8 @@ const ACCEPT_IMAGE = 'image/*';
 
 const App = () => {
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const pickerRef = useRef<HTMLDivElement | null>(null);
+  const syncingScrollRef = useRef(false);
 
   const [sourceImage, setSourceImage] = useState<HTMLImageElement | null>(null);
   const [sourceName, setSourceName] = useState('');
@@ -26,6 +28,11 @@ const App = () => {
   const [message, setMessage] = useState('等待导入图片。');
   const [error, setError] = useState('');
   const [result, setResult] = useState<ProcessResult | null>(null);
+  const [normalizedPreviewUrl, setNormalizedPreviewUrl] = useState('');
+  const [normalizedHeight, setNormalizedHeight] = useState(0);
+  const [pickerViewportHeight, setPickerViewportHeight] = useState(180);
+
+  const normalizedCanvasRef = useRef<HTMLCanvasElement | null>(null);
 
   const pixelOffset = useMemo(() => {
     if (offsetInputMode === 'page') {
@@ -42,6 +49,9 @@ const App = () => {
 
   useEffect(() => {
     return () => {
+      if (normalizedPreviewUrl) {
+        URL.revokeObjectURL(normalizedPreviewUrl);
+      }
       setResult((prev) => {
         if (prev?.dataUrl) {
           URL.revokeObjectURL(prev.dataUrl);
@@ -50,6 +60,37 @@ const App = () => {
       });
     };
   }, []);
+
+  useEffect(() => {
+    if (!sourceImage) {
+      normalizedCanvasRef.current = null;
+      setNormalizedHeight(0);
+      setNormalizedPreviewUrl((prev) => {
+        if (prev) {
+          URL.revokeObjectURL(prev);
+        }
+        return '';
+      });
+      return;
+    }
+
+    const normalized = normalizeTo1920(sourceImage);
+    normalizedCanvasRef.current = normalized;
+    setNormalizedHeight(normalized.height);
+
+    normalized.toBlob((blob) => {
+      if (!blob) {
+        return;
+      }
+      const nextUrl = URL.createObjectURL(blob);
+      setNormalizedPreviewUrl((prev) => {
+        if (prev) {
+          URL.revokeObjectURL(prev);
+        }
+        return nextUrl;
+      });
+    }, 'image/png');
+  }, [sourceImage]);
 
   useEffect(() => {
     const onPaste = async (event: ClipboardEvent) => {
@@ -94,7 +135,11 @@ const App = () => {
       setMessage('处理中...');
 
       try {
-        const normalized = normalizeTo1920(sourceImage);
+        const normalized = normalizedCanvasRef.current;
+        if (!normalized) {
+          return;
+        }
+
         const output = renderCrop(normalized, normalized.height, mode, pixelOffset);
         const blob = await canvasToPngBlob(output);
         const nextUrl = URL.createObjectURL(blob);
@@ -133,7 +178,42 @@ const App = () => {
     return () => {
       cancelled = true;
     };
-  }, [sourceImage, mode, pixelOffset]);
+  }, [sourceImage, mode, pixelOffset, normalizedHeight]);
+
+  useEffect(() => {
+    const picker = pickerRef.current;
+    if (!picker || !normalizedHeight) {
+      return;
+    }
+
+    const updateMetrics = () => {
+      const scale = picker.clientWidth / TARGET_WIDTH;
+      const viewport = Math.max(120, Math.round(TARGET_HEIGHT * Math.max(scale, 0.05)));
+      setPickerViewportHeight(viewport);
+    };
+
+    updateMetrics();
+    const observer = new ResizeObserver(updateMetrics);
+    observer.observe(picker);
+    return () => observer.disconnect();
+  }, [normalizedHeight]);
+
+  useEffect(() => {
+    const picker = pickerRef.current;
+    if (!picker || mode !== 'offset' || !normalizedHeight) {
+      return;
+    }
+
+    const scale = picker.clientWidth / TARGET_WIDTH;
+    if (!Number.isFinite(scale) || scale <= 0) {
+      return;
+    }
+
+    const maxStart = Math.max(0, normalizedHeight - TARGET_HEIGHT);
+    const safeStart = Math.min(Math.max(pixelOffset, 0), maxStart);
+    syncingScrollRef.current = true;
+    picker.scrollTop = Math.max(0, safeStart * scale);
+  }, [mode, pixelOffset, normalizedHeight, pickerViewportHeight]);
 
   const handleFile = async (file: File, fallbackName?: string) => {
     if (!file.type.startsWith('image/')) {
@@ -203,6 +283,24 @@ const App = () => {
     anchor.href = result.dataUrl;
     anchor.download = `crop-${mode}-${Date.now()}.png`;
     anchor.click();
+  };
+
+  const onPickerScroll = () => {
+    const picker = pickerRef.current;
+    if (!picker || syncingScrollRef.current) {
+      syncingScrollRef.current = false;
+      return;
+    }
+
+    const scale = picker.clientWidth / TARGET_WIDTH;
+    if (!Number.isFinite(scale) || scale <= 0) {
+      return;
+    }
+
+    const nextPixel = Math.trunc(picker.scrollTop / scale);
+    setPixelValue(String(nextPixel));
+    const nextPage = Number.parseFloat((nextPixel / TARGET_HEIGHT + 1).toFixed(3));
+    setPageValue(String(nextPage));
   };
 
   const offsetLabel = offsetInputMode === 'page' ? `当前起始像素: ${pixelOffset}px` : '支持负数或超范围，将自动透明补白。';
@@ -297,6 +395,19 @@ const App = () => {
             )}
 
             <p className="tip">{offsetLabel}</p>
+            {normalizedPreviewUrl ? (
+              <div className="scroll-picker-section">
+                <p className="tip">滚动下方预览可直接选择裁切起始区域。</p>
+                <div
+                  className="scroll-picker"
+                  ref={pickerRef}
+                  onScroll={onPickerScroll}
+                  style={{ height: `${pickerViewportHeight}px` }}
+                >
+                  <img src={normalizedPreviewUrl} alt="滚动选区预览" className="scroll-picker-image" />
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </section>
